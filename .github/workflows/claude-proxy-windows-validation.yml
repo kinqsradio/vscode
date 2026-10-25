@@ -1,0 +1,60 @@
+name: Claude proxy Windows validation
+
+on:
+  push:
+    branches: [chore/claude-proxy-windows-validation]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claude-proxy-windows-validation
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    if: github.repository == 'kinqsradio/vscode'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: .nvmrc
+      - name: Record Windows runtime
+        run: |
+          New-Item -ItemType Directory -Force .build/claude-proxy-validation | Out-Null
+          node -p 'JSON.stringify({platform:process.platform,arch:process.arch,node:process.version,versions:process.versions})' | Tee-Object .build/claude-proxy-validation/runtime.txt
+          $PSVersionTable.PSVersion.ToString() | Tee-Object -Append .build/claude-proxy-validation/runtime.txt
+          git --version | Tee-Object -Append .build/claude-proxy-validation/runtime.txt
+      - name: Install JavaScript test and transpile dependencies
+        run: |
+          npm ci --ignore-scripts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm ci --ignore-scripts --prefix build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Transpile client sources for targeted Node tests
+        run: node build/next/index.ts transpile
+      - name: Confirm baseline fails the new regressions
+        run: node .github/scripts/claude-proxy-windows-validation.mjs baseline
+      - name: Run fixed regressions and adjacent Claude suites
+        run: node .github/scripts/claude-proxy-windows-validation.mjs candidate
+      - name: Verify native PowerShell tool execution
+        run: node .github/scripts/claude-proxy-windows-validation.mjs smoke
+      - name: Upload verification receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: claude-proxy-windows-validation
+          path: .build/claude-proxy-validation/
+          if-no-files-found: warn
+          retention-days: 14
